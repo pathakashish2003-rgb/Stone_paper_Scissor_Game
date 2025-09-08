@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Stone Paper Scissors</title>
+    <style>
+        body { font-family: Arial; text-align: center; margin-top: 50px; }
+        button { margin: 10px; padding: 10px 20px; font-size: 16px; }
+        input { padding: 5px; font-size: 16px; margin: 5px; }
+        #result, #history, #loginMsg, #scoreboard { margin-top: 20px; font-size: 18px; }
+        #history ul { list-style-type: none; padding: 0; }
+        #history li { margin: 5px 0; padding: 10px; border: 1px solid #ccc; border-radius: 5px; }
+        .win { color: green; font-weight: bold; }
+        .lose { color: red; font-weight: bold; }
+        .draw { color: blue; font-weight: bold; }
+        .loading { opacity: 0.6; }
+        #logoutBtn { background-color: #ff4444; color: white; }
+    </style>
+</head>
+<body>
+
+<h1>Stone Paper Scissors 🎮</h1>
+
+<div id="loginDiv">
+    <h3>Login with Mobile</h3>
+    <input type="text" id="mobile" placeholder="Enter mobile number (10 digits)" /><br>
+    <button id="otpRequestBtn" onclick="requestOTP()">Request OTP</button><br><br>
+    <input type="text" id="otp" placeholder="Enter OTP" /><br>
+    <button id="otpVerifyBtn" onclick="verifyOTP()">Verify OTP</button>
+    <div id="loginMsg"></div>
+</div>
+
+<div id="gameDiv" style="display:none;">
+    <button onclick="play('stone')">🪨 Stone</button>
+    <button onclick="play('paper')">📄 Paper</button>
+    <button onclick="play('scissor')">✂️ Scissor</button>
+    <button id="logoutBtn" onclick="logout()">Logout</button>
+
+    <div id="result"></div>
+
+    <h2>Scoreboard</h2>
+    <div id="scoreboard">Loading...</div>
+
+    <h2>Game History (Last 10)</h2>
+    <ul id="history"></ul>
+</div>
+
+<script>
+let token = localStorage.getItem("jwt") || null;
+console.log("Initial token check:", token ? "Found" : "None"); // Debug log
+
+// Ensure initial display (fallback if JS fails)
+document.addEventListener("DOMContentLoaded", function() {
+    if (!token) {
+        document.getElementById("loginDiv").style.display = "block";
+        document.getElementById("gameDiv").style.display = "none";
+    } else {
+        verifyTokenAndLoad();
+    }
+});
+
+// Helper function for loading states
+function setLoading(buttonId, isLoading) {
+    const btn = document.getElementById(buttonId);
+    if (isLoading) {
+        btn.disabled = true;
+        btn.innerText = btn.innerText.includes('OTP') ? 'Requesting...' : 'Verifying...';
+        document.body.classList.add('loading');
+    } else {
+        btn.disabled = false;
+        btn.innerText = btn.innerText.includes('Requesting') ? 'Request OTP' : 'Verify OTP';
+        document.body.classList.remove('loading');
+    }
+}
+
+// Logout function
+function logout() {
+    localStorage.removeItem("jwt");
+    token = null;
+    document.getElementById("loginDiv").style.display = "block";
+    document.getElementById("gameDiv").style.display = "none";
+    document.getElementById("loginMsg").innerText = "Logged out successfully.";
+    console.log("Logged out"); // Debug log
+}
+
+// ------------------ OTP Functions ------------------
+async function requestOTP() {
+    const mobile = document.getElementById("mobile").value.trim();
+    const loginMsg = document.getElementById("loginMsg");
+
+    // Client-side validation
+    if (!/^\d{10}$/.test(mobile)) {
+        loginMsg.innerText = "Please enter a valid 10-digit mobile number";
+        return;
+    }
+
+    setLoading("otpRequestBtn", true);
+    loginMsg.innerText = "";
+
+    try {
+        const res = await fetch("/auth/request-otp", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mobile })
+        });
+
+        if (!res.ok) {
+            const errorData = await res.json().catch(() => ({}));
+            throw new Error(errorData.error || `HTTP error! Status: ${res.status}`);
+        }
+
+        const data = await res.json();
+        loginMsg.innerText = `OTP: ${data.otp} (Valid for 2 minutes)`;
+        console.log("OTP requested for:", mobile); // Debug log
+    } catch (err) {
+        loginMsg.innerText = "Error: Could not connect to server. Is the server running?";
+        console.error("Request OTP error:", err); // Debug log
+    } finally {
+        setLoading("otpRequestBtn", false);
+    }
+}
+
+async function verifyOTP() {
+    const mobile = document.getElementById("mobile").value.trim();
+    const otp = document.getElementById("otp").value.trim();
+    const loginMsg = document.getElementById("loginMsg");
+
+    // Client-side validation
+    if (!/^\d{10}$/.test(mobile) || !/^\d{4}$/.test(otp)) {
+        loginMsg.innerText = "Invalid mobile or OTP format";
+        return;
+    }
+
+    setLoading("otpVerifyBtn", true);
+    loginMsg.innerText = "";
+
+    try {
+        const res = await fetch("/auth/verify-otp", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mobile, otp })
+        });
+
+        if (!res.ok) {
+            const errorData = await res.json().catch(() => ({}));
+            throw new Error(errorData.error || `HTTP error! Status: ${res.status}`);
+        }
+
+        const data = await res.json();
+
+        if (data.token) {
+            token = data.token;
+            localStorage.setItem("jwt", token);
+            document.getElementById("loginDiv").style.display = "none";
+            document.getElementById("gameDiv").style.display = "block";
+            loadHistory();
+            loadScoreboard();
+            loginMsg.innerText = ""; // Clear any old message
+            console.log("Login successful"); // Debug log
+        } else {
+            loginMsg.innerText = data.error || "Verification failed";
+        }
+    } catch (err) {
+        loginMsg.innerText = "Error: Could not connect to server. Is the server running?";
+        console.error("Verify OTP error:", err); // Debug log
+    } finally {
+        setLoading("otpVerifyBtn", false);
+    }
+}
+
+// ------------------ Game Functions ------------------
+async function play(choice) {
+    if (!token) {
+        alert("Please log in first");
+        return;
+    }
+
+    const resultDiv = document.getElementById("result");
+    resultDiv.innerHTML = "Playing...";
+
+    try {
+        const res = await fetch("/play", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer " + token
+            },
+            body: JSON.stringify({ choice })
+        });
+
+        if (!res.ok) {
+            const errorData = await res.json().catch(() => ({}));
+            throw new Error(errorData.error || `HTTP error! Status: ${res.status}`);
+        }
+
+        const data = await res.json();
+        if (data.error) {
+            alert(data.error);
+            return;
+        }
+
+        resultDiv.innerHTML = `
+            You chose: <b>${data.userChoice}</b> <br>
+            Computer chose: <b>${data.computerChoice}</b> <br>
+            <h2>Result: ${data.result.toUpperCase()}</h2>
+        `;
+        loadHistory();
+        loadScoreboard();
+        console.log("Game played:", data); // Debug log
+    } catch (err) {
+        resultDiv.innerHTML = "Error playing game. Please try again.";
+        console.error("Play game error:", err); // Debug log
+    }
+}
+
+async function loadHistory() {
+    if (!token) return;
+
+    try {
+        const res = await fetch("/history", {
+            headers: { "Authorization": "Bearer " + token }
+        });
+
+        if (!res.ok) {
+            const errorData = await res.json().catch(() => ({}));
+            throw new Error(errorData.error || `HTTP error! Status: ${res.status}`);
+        }
+
+        const games = await res.json();
+        if (games.error) {
+            alert(games.error);
+            return;
+        }
+
+        const historyList = document.getElementById("history");
+        historyList.innerHTML = "";
+        games.forEach(g => {
+            const li = document.createElement("li");
+            const timestamp = new Date(g.createdAt).toLocaleString();
+            const resultClass = g.result === "win" ? "win" : g.result === "lose" ? "lose" : "draw";
+            li.innerHTML = `<span class="${resultClass}">${timestamp} - ${g.userChoice} vs ${g.computerChoice} → ${g.result}</span>`;
+            historyList.appendChild(li);
+        });
+    } catch (err) {
+        console.error("Load history error:", err); // Debug log
+        document.getElementById("history").innerHTML = "<li>Error loading history</li>";
+    }
+}
+
+async function loadScoreboard() {
+    if (!token) return;
+
+    try {
+        const res = await fetch("/scoreboard", {
+            headers: { "Authorization": "Bearer " + token }
+        });
+
+        if (!res.ok) {
+            const errorData = await res.json().catch(() => ({}));
+            throw new Error(errorData.error || `HTTP error! Status: ${res.status}`);
+        }
+
+        const stats = await res.json();
+        if (stats.error) {
+            document.getElementById("scoreboard").innerText = "Error loading scoreboard";
+            return;
+        }
+
+        document.getElementById("scoreboard").innerHTML = `
+            Wins: ${stats.win || 0} | Losses: ${stats.lose || 0} | Draws: ${stats.draw || 0}
+        `;
+    } catch (err) {
+        console.error("Load scoreboard error:", err); // Debug log
+        document.getElementById("scoreboard").innerText = "Error loading scoreboard";
+    }
+}
+
+// ------------------ Auto-login ------------------
+async function verifyTokenAndLoad() {
+    console.log("Verifying token..."); // Debug log
+    try {
+        // Try loading history to validate token
+        const res = await fetch("/history", {
+            headers: { "Authorization": "Bearer " + token }
+        });
+
+        if (!res.ok) {
+            const errorData = await res.json().catch(() => ({}));
+            throw new Error(errorData.error || `HTTP error! Status: ${res.status}`);
+        }
+
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+
+        document.getElementById("loginDiv").style.display = "none";
+        document.getElementById("gameDiv").style.display = "block";
+        loadHistory();
+        loadScoreboard();
+        console.log("Auto-login successful"); // Debug log
+    } catch (err) {
+        // Token invalid or expired
+        localStorage.removeItem("jwt");
+        token = null;
+        document.getElementById("loginDiv").style.display = "block";
+        document.getElementById("gameDiv").style.display = "none";
+        document.getElementById("loginMsg").innerText = "Session expired or server issue. Please log in again.";
+        console.error("Token verification failed:", err); // Debug log
+    }
+}
+</script>
+
+</body>
+</html>
